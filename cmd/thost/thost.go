@@ -7,17 +7,15 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"github.com/markmnl/tmail-store/tstore/pkg"
+	"github.com/markmnl/tmail-store-stdout/tstore-stdout/pkg"
 )
 
+// Version of this server
 const Version string = "0.1"
+// MaxMessageSize this server will entertain
 const MaxMessageSize int64 = 1000000
 
-type Message struct {
-	From string
-	To string
-	Time int64
-	Content string
-}
 
 func main() {
 	http.HandleFunc("/tmail/info", infoHandler)
@@ -44,20 +42,20 @@ func infoHandler(w http.ResponseWriter, r *http.Request) {
 
 func postHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != "POST" {
-		http.Error(w, "Must be POST", http.StatusBadRequest)
+		http.Error(w, "", http.StatusNotFound)
 		return
 	}
 	if r.ContentLength < 1 {
-		http.Error(w, "Content-Length required", http.StatusLengthRequired)
+		http.Error(w, "", http.StatusLengthRequired)
 		return
 	}
 	if r.ContentLength > MaxMessageSize {
-		http.Error(w, "Message too big", http.StatusRequestEntityTooLarge)
+		http.Error(w, "", http.StatusRequestEntityTooLarge)
 		return
 	}
 	contentType, hasContentType := r.Header["Content-Type"]
 	if !hasContentType || contentType == nil || contentType[0] != "application/json" {
-		http.Error(w, "Unsupported Content-Type", http.StatusUnsupportedMediaType)
+		http.Error(w, "", http.StatusUnsupportedMediaType)
 		return
 	}
 	// TODO can/should we validate _actual_ length? 
@@ -68,16 +66,22 @@ func postHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var msg Message
+	var msg tstore.Msg
 	jsonErr := json.Unmarshal(body, &msg)
 	if jsonErr != nil {
-		log.Printf("Dropping message - failed to parse JSON: %s\n", jsonErr)
+		log.Printf("ERROR Dropping message - failed to parse JSON: %s\n", jsonErr)
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
+	
+	//-----------------------------
+	storeErr := tstdout.Store(&msg)
+	//-----------------------------
+	if storeErr != nil {
+		log.Printf("ERROR Failed to store msg: %s\n", storeErr)
+		http.Error(w, "Failed to store message", http.StatusInternalServerError)
+		return
+	}
 
-
-	log.Println("------- NEW MESSAGE -------")
-	log.Printf("%#v\n", msg)
-	log.Println("---------------------------")
+	w.WriteHeader(http.StatusCreated)
 }
