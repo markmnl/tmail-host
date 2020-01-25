@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"encoding/base64"
 	"io/ioutil"
 	"fmt"
 	"log"
@@ -73,6 +75,25 @@ func postHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
+
+	// validate id not supplied..
+	if msg.ID != "" {
+		http.Error(w, "id cannot have a value", http.StatusBadRequest)
+		return
+	}
+
+	// calc the id..
+	msgIDBytes := sha256.Sum256(body)
+	msg.ID = base64.StdEncoding.EncodeToString(msgIDBytes[:])
+
+	// if has pid verify exists..
+	if msg.PID != "" {
+		if exists, _ := tstdout.ParentExists(&msg); !exists {
+			http.Error(w, "pid not found", http.StatusBadRequest)
+			return
+		}
+	}
+	
 	
 	//-----------------------------
 	storeErr := tstdout.Store(&msg)
