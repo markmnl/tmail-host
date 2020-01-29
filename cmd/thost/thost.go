@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"errors"
 	"encoding/json"
 	"encoding/base64"
 	"io/ioutil"
@@ -68,36 +69,43 @@ func postHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// parse..
 	var msg tstore.Msg
-	jsonErr := json.Unmarshal(body, &msg)
+	msgPtr := &msg
+	jsonErr := json.Unmarshal(body, msgPtr)
 	if jsonErr != nil {
 		log.Printf("ERROR Dropping message - failed to parse JSON: %s\n", jsonErr)
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
+	if msg.PID64 != "" {
+		if len(msg.PID64) != 44 {
+			http.Error(w, "Invalid pid length", http.StatusBadRequest)
+			return
+		}
+		pid64Bytes, parsePIDErr := base64.StdEncoding.DecodeString(msg.PID64)
+		if parsePIDErr != nil {
+			http.Error(w, "", http.StatusBadRequest)
+			return
+		}
+		copy(pid64Bytes, msg.PID[:])
+	}
 
-	// validate id not supplied..
-	if msg.ID != "" {
-		http.Error(w, "id cannot have a value", http.StatusBadRequest)
+	// validate..
+	isValid, validErr := validateMsg(msgPtr)
+	if validErr != nil {
+		log.Printf("ERROR validating msg: %s\n", validErr)
+	}
+	if !isValid {
+		http.Error(w, "", http.StatusBadRequest)
 		return
 	}
 
-	// calc the id..
-	msgIDBytes := sha256.Sum256(body)
-	msg.ID = base64.StdEncoding.EncodeToString(msgIDBytes[:])
+	// calc id..
+	msg.ID = sha256.Sum256(body)
 
-	// if has pid verify exists..
-	if msg.PID != "" {
-		if exists, _ := tstdout.ParentExists(&msg); !exists {
-			http.Error(w, "pid not found", http.StatusBadRequest)
-			return
-		}
-	}
-	
-	
-	//-----------------------------
-	storeErr := tstdout.Store(&msg)
-	//-----------------------------
+	// store..
+	storeErr := tstdout.Store(msgPtr)
 	if storeErr != nil {
 		log.Printf("ERROR Failed to store msg: %s\n", storeErr)
 		http.Error(w, "Failed to store message", http.StatusInternalServerError)
@@ -105,4 +113,30 @@ func postHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusCreated)
+}
+
+func validateMsg(msg *tstore.Msg) (bool, error) {
+
+	// TODO ensure no attempt to provide id - we calculate it to ensure integrity..
+	// if msg.ID != nil {
+	// 	return false, errors.New("id cannot be provided")
+	// }
+
+	// if has pid verify exists..
+	if msg.PID64 != "" {
+		exists, err := tstdout.ParentExists(msg)
+		if err != nil {
+			return false, err
+		}
+		if !exists {
+			return false, errors.New("pid not found")
+		}
+	}
+
+	// TODO:
+	// verify from and to addrs
+	// verify time
+	// verify attachments
+
+	return true, nil
 }
