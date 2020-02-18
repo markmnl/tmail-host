@@ -11,7 +11,7 @@ import (
 	"net/http"
 	"os"
 	"github.com/markmnl/tmail-store/tstore/pkg"
-	"github.com/markmnl/tmail-store-stdout/tstore-stdout/pkg"
+	"github.com/markmnl/tmail-store-postgres/tstore-postgres/pkg"
 )
 
 // Version of this server
@@ -44,6 +44,8 @@ func infoHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func postHandler(w http.ResponseWriter, r *http.Request) {
+
+	// validate request..
 	if r.Method != "POST" {
 		http.Error(w, "", http.StatusNotFound)
 		return
@@ -61,15 +63,14 @@ func postHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "", http.StatusUnsupportedMediaType)
 		return
 	}
-	// TODO can/should we validate _actual_ length? 
-	body, readErr := ioutil.ReadAll(r.Body)
+	body, readErr := ioutil.ReadAll(r.Body) // TODO can/should we validate _actual_ length? 
 	if readErr != nil {
 		log.Printf("Failed to read body: %s\n", readErr)
 		http.Error(w, "", http.StatusInternalServerError)
 		return
 	}
 
-	// parse..
+	// parse msg..
 	var msg tstore.Msg
 	msgPtr := &msg
 	jsonErr := json.Unmarshal(body, msgPtr)
@@ -88,10 +89,10 @@ func postHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "", http.StatusBadRequest)
 			return
 		}
-		copy(pid64Bytes, msg.PID[:])
+		copy(msg.PID[:], pid64Bytes)
 	}
 
-	// validate..
+	// validate msg..
 	isValid, validErr := validateMsg(msgPtr)
 	if validErr != nil {
 		log.Printf("ERROR validating msg: %s\n", validErr)
@@ -101,11 +102,11 @@ func postHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// calc id..
+	// digest..
 	msg.ID = sha256.Sum256(body)
 
 	// store..
-	storeErr := tstdout.Store(msgPtr)
+	storeErr := pgstore.Store(msgPtr)
 	if storeErr != nil {
 		log.Printf("ERROR Failed to store msg: %s\n", storeErr)
 		http.Error(w, "Failed to store message", http.StatusInternalServerError)
@@ -124,12 +125,12 @@ func validateMsg(msg *tstore.Msg) (bool, error) {
 
 	// if has pid verify exists..
 	if msg.PID64 != "" {
-		exists, err := tstdout.ParentExists(msg)
+		exists, err := pgstore.ParentExists(msg.PID[:])
 		if err != nil {
 			return false, err
 		}
 		if !exists {
-			return false, errors.New("pid not found")
+			return false, errors.New("Parent not found")
 		}
 	}
 
